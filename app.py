@@ -14,8 +14,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import networkx as nx
-from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
 
 # Set page config
 st.set_page_config(
@@ -180,12 +178,14 @@ def activity_durations(df, case_col, act_col, ts_col):
     
     # Enhanced aggregation
     agg = df_dur.groupby("activity")["duration_h"].agg([
-        "count", "mean", "median", "std", "min", "max",
-        lambda x: x.quantile(0.25), lambda x: x.quantile(0.75)
+        "count", "mean", "median", "std", "min", "max"
     ]).reset_index()
     
     agg.columns = ["activity", "count", "avg_hours", "median_hours", 
-                   "std_hours", "min_hours", "max_hours", "q25_hours", "q75_hours"]
+                   "std_hours", "min_hours", "max_hours"]
+    
+    # Fill NaN values
+    agg = agg.fillna(0)
     
     return agg.sort_values("avg_hours", ascending=False)
 
@@ -250,19 +250,6 @@ def conformance_analysis(seqs: pd.Series, ideal: List[str]) -> pd.DataFrame:
     
     return pd.DataFrame(rows)
 
-def create_process_graph(edges, edge_probs, min_frequency=1):
-    """Create enhanced process graph visualization"""
-    G = nx.DiGraph()
-    
-    # Filter edges by frequency
-    filtered_edges = {k: v for k, v in edges.items() if v >= min_frequency}
-    
-    for (source, target), weight in filtered_edges.items():
-        prob = edge_probs.get((source, target), 0)
-        G.add_edge(source, target, weight=weight, probability=prob)
-    
-    return G
-
 def generate_insights(df, analysis_results):
     """Generate AI-powered insights"""
     insights = []
@@ -282,16 +269,17 @@ def generate_insights(df, analysis_results):
     # Cycle time insights
     if "cycle_times" in analysis_results:
         cycle_times = analysis_results["cycle_times"]
-        avg_days = cycle_times["cycle_time_days"].mean()
-        std_days = cycle_times["cycle_time_days"].std()
-        
-        if std_days > avg_days:
-            insights.append({
-                "type": "performance",
-                "title": "High Variability Detected",
-                "message": f"Large variation in cycle times (avg: {avg_days:.1f} days, std: {std_days:.1f} days). Investigate process inconsistencies.",
-                "severity": "warning"
-            })
+        if not cycle_times.empty:
+            avg_days = cycle_times["cycle_time_days"].mean()
+            std_days = cycle_times["cycle_time_days"].std()
+            
+            if std_days > avg_days:
+                insights.append({
+                    "type": "performance",
+                    "title": "High Variability Detected",
+                    "message": f"Large variation in cycle times (avg: {avg_days:.1f} days, std: {std_days:.1f} days). Investigate process inconsistencies.",
+                    "severity": "warning"
+                })
     
     # Activity duration insights
     if "activity_durations" in analysis_results:
@@ -562,8 +550,11 @@ def show_process_map(edges, edge_probs, min_frequency, df_clean, activity_col):
         
         # Draw edges with varying thickness
         edge_weights = [G[u][v]['weight'] for u, v in G.edges()]
-        max_weight = max(edge_weights) if edge_weights else 1
-        edge_widths = [3 * (w / max_weight) + 0.5 for w in edge_weights]
+        if edge_weights:
+            max_weight = max(edge_weights)
+            edge_widths = [3 * (w / max_weight) + 0.5 for w in edge_weights]
+        else:
+            edge_widths = [1] * len(G.edges())
         
         nx.draw_networkx_edges(G, pos, width=edge_widths, alpha=0.6, 
                               edge_color='gray', arrows=True, 
@@ -906,14 +897,15 @@ def show_insights(df_clean, analysis_results):
     # Check for cycle time variability
     if "cycle_times" in analysis_results and not analysis_results["cycle_times"].empty:
         cycle_times = analysis_results["cycle_times"]
-        cv = cycle_times['cycle_time_hours'].std() / cycle_times['cycle_time_hours'].mean()
-        if cv > 1:
-            recommendations.append({
-                "category": "Process Standardization",
-                "priority": "Medium",
-                "recommendation": f"High variability in cycle times (CV: {cv:.1f}). Standardize process execution to reduce variation.",
-                "impact": "Improve predictability and customer satisfaction"
-            })
+        if not cycle_times.empty and cycle_times['cycle_time_hours'].std() > 0:
+            cv = cycle_times['cycle_time_hours'].std() / cycle_times['cycle_time_hours'].mean()
+            if cv > 1:
+                recommendations.append({
+                    "category": "Process Standardization",
+                    "priority": "Medium",
+                    "recommendation": f"High variability in cycle times (CV: {cv:.1f}). Standardize process execution to reduce variation.",
+                    "impact": "Improve predictability and customer satisfaction"
+                })
     
     if recommendations:
         for i, rec in enumerate(recommendations, 1):
